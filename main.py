@@ -1,9 +1,3 @@
-# coding: utf-8
-from __future__ import division
-from __future__ import absolute_import
-from __future__ import print_function
-from __future__ import unicode_literals
-
 import os
 import json
 import time
@@ -23,25 +17,28 @@ exception_lst_DIN = [
 ]
 
 
-def request_f(url, retry=1000, json=''):
+def request_get(url, type_response='html', retry=1000):
+    # выполнение get запроса
     try:
-        r = requests.request("GET", url)
+        response = requests.request("GET", url)
         # если переход на другой сайт
-        if os.environ['OTHER_DOMAIN'] in r.url:
-            return r
-        if json == 'json':
-            return r
-        assert (r.status_code == 200), ("Error, Response code: ", r.status_code, url)
+        if os.environ['OTHER_DOMAIN'] in response.url:
+            return response
+        if type_response == 'json':
+            return response
+        # вызываем исключение, если код ответа не 200
+        assert (response.status_code == 200), ("Error, Response code: ", response.status_code, url)
     except Exception as _e:
-        if retry:
-            print('FAIL: %r generated an exception: %s' % (urllib.parse.unquote_plus(url), _e))
+        print("FAIL: '{}' generated an exception: {}".format(urllib.parse.unquote_plus(url), _e))
+        if retry > 0:
             time.sleep(randint(5, 10))
-            return request_f(url, retry=(retry - 1))  # retry fail
+            # повтор запроса
+            return request_get(url, type_response, retry=(retry - 1))
         else:
             print("\n retry limit is null \n")
             raise  # fail
     else:
-        return r  # ok
+        return response  # ok
 
 
 connect = psycopg2.connect(database=os.environ['NAME_DB'],
@@ -69,6 +66,7 @@ cursor.execute("CREATE TABLE IF NOT EXISTS products "
 
 
 def rec_to_file(nameFile, string):
+    # запись в файл
     my_file = open(nameFile, 'a', encoding='utf-8')
     my_file.write("{}\n".format(string))
     my_file.close()
@@ -101,7 +99,7 @@ def extract_breadcrump(tree, level, href):
 def exist_bread(bread):
     # проверка наличия хлебных крошек в бд
     bread = re.sub("'", "''", bread)
-    cursor.execute(f"SELECT * FROM struct WHERE breadcrumb='{bread}' LIMIT 1")
+    cursor.execute('SELECT * FROM struct WHERE breadcrumb=%s LIMIT 1;', (bread,))
     br = cursor.fetchall()
     if len(br) > 0:
         return 'exist'
@@ -111,7 +109,7 @@ def exist_bread(bread):
 
 def exist_product(id_prod):
     # проверка наличия товара в бд
-    cursor.execute(f"SELECT * FROM products WHERE id_prod='{id_prod}' LIMIT 1")
+    cursor.execute('SELECT * FROM products WHERE id_prod=%s LIMIT 1;', (id_prod,))
     pr = cursor.fetchall()
     if len(pr) > 0:
         return 'exist'
@@ -121,7 +119,7 @@ def exist_product(id_prod):
 
 def pars_product(url_prod):
     # парсинг товара
-    response9 = request_f(url_prod, 1000, '')
+    response9 = request_get(url_prod)
     html_text = response9.text
     text = html_text.replace("</br>", "<br/>")
     tree9 = html.fromstring(text)
@@ -147,7 +145,7 @@ def pars_product(url_prod):
     if exist_prod == 'not_exist':
         # картинки
         url_media = "{}/ru/ru/product/pdp/media/{}".format(os.environ['BASE_URL'], id_prod)
-        response10 = request_f(url_media, 1000, 'json')
+        response10 = request_get(url_media, 'json')
         img = ''
         image360 = ''
         video_list = []
@@ -212,7 +210,7 @@ def pars_product(url_prod):
         # рекомендуемые товары
         related_prod_list = {}
         url_r11 = '{}/ru/ru/product/api/related-products/{}?site-type=b2b'.format(os.environ['BASE_URL'], id_prod)
-        response11 = request_f(url_r11, 1000, 'json')
+        response11 = request_get(url_r11, 'json')
         if len(response11.text) > 0 and 'info' in response11.text and response11.status_code == 200:
             rel_lst = json.loads(response11.text)['info']
             if len(rel_lst) > 0:
@@ -254,7 +252,7 @@ def extr_list_doc2_soft(url_params, entity):
     # запрос документов или ПО
     url_doc2 = "{}/ru/ru/product/async/productDocuments.jsp?productId={}&paramRangeId={}&filterForTab={}&heading={}&blockId={}".format(
         os.environ['BASE_URL'], data_prod_id, data_range_id, data_filter, data_head, data_block_id)
-    response12 = request_f(url_doc2, 1000, '')
+    response12 = request_get(url_doc2)
     entities_list = {}
     if len(response12.text) > 0:
         tree12 = html.fromstring(response12.text)
@@ -291,7 +289,7 @@ def extract_subnode(tree4):
 
 
 base_url = "{}/ru/ru/".format(os.environ['BASE_URL'])
-response = request_f(base_url, 1000, '')
+response = request_get(base_url)
 tree = html.fromstring(response.text)
 group_lst = tree.xpath('//div[@class="sdl-header-se_mm-main-list-products"]//li[@class="sdl-header-se_mm-l2-item"]')
 for gr in group_lst:
@@ -307,7 +305,7 @@ for gr in group_lst:
         href_gr_lvl1 = str(href_gr_lvl1[0])
 
     # запись в бд, если ссылка не записана
-    cursor.execute(f"SELECT * FROM struct WHERE link='{href_gr_lvl1}' LIMIT 1")
+    cursor.execute('SELECT * FROM struct WHERE link=%s LIMIT 1;', (href_gr_lvl1,))
     hr = cursor.fetchall()
     if len(hr) > 0:
         pass
@@ -330,7 +328,7 @@ for gr in group_lst:
 
         if href_gr_lvl2 not in exception_lst:
             # заходим в подраздел
-            response2 = request_f(href_gr_lvl2, 1000, '')
+            response2 = request_get(href_gr_lvl2)
             tree2 = html.fromstring(response2.text)
             level2 = 2
             # хлебные крошки
@@ -359,7 +357,7 @@ for gr in group_lst:
                 if href_gr_lvl3 not in exception_lst_DIN:
                     # заходим в подкатегорию
                     url_r3 = '{}{}'.format(os.environ['BASE_URL'], href_gr_lvl3)
-                    response3 = request_f(url_r3, 1000, '')
+                    response3 = request_get(url_r3)
                     tree3 = html.fromstring(response3.text)
                     level3 = 3
                     # хлебные крошки
@@ -383,7 +381,7 @@ for gr in group_lst:
 
                         def work_with_gr_lvl4(href_gr_lvl4):
                             # работа с 4 уровнем (секции)
-                            response4 = request_f(href_gr_lvl4, 1000, '')
+                            response4 = request_get(href_gr_lvl4)
                             # если был переход на другой сайт
                             if os.environ['OTHER_DOMAIN'] in response4.url:
                                 return
@@ -431,7 +429,7 @@ for gr in group_lst:
                                     if single_filt != 1:
                                         filter_link = count_filt_url.replace("product-range", "product-range-refinements")
                                         url_r5 = '{}&format=json&ts=1625527189530'.format(filter_link)
-                                        response5 = request_f(url_r5, 1000, 'json')
+                                        response5 = request_get(url_r5, 'json')
                                         name_filter_list_lvl4 = []
                                         if response5.status_code == 200:
                                             if json.loads(response5.text)['SecondaryContent'] is not None:
@@ -479,7 +477,7 @@ for gr in group_lst:
                                         product_ids = str(product_ids[0])
                                         # запрос к апи
                                         url_r6 = '{}/ru/ru/product/api/productCard/main?ids={}'.format(os.environ['BASE_URL'], product_ids)
-                                        response6 = request_f(url_r6, 1000, 'json')
+                                        response6 = request_get(url_r6, 'json')
                                         product_url_params = str(prod_cards[0].xpath('//product-cards-wrapper/@product-url-params')[0])
                                         if response6.status_code == 200:
                                             prod_lst = json.loads(response6.text)['products']
@@ -501,7 +499,7 @@ for gr in group_lst:
                                                 n_param = re.search('(?<=[\?N=])(.*?)(?=&)', pagin_next_param).group(0)
                                                 pagin_next_url_lvl4 = '{}&{}{}'.format(href_gr_lvl4, n_param, next_param)
                                                 # заходим в секцию (на следующую стр)
-                                                response8 = request_f(pagin_next_url_lvl4, 1000, '')
+                                                response8 = request_get(pagin_next_url_lvl4)
                                                 tree8 = html.fromstring(response8.text)
                                                 extract_prod_list(tree8)
                                             pass
@@ -509,7 +507,7 @@ for gr in group_lst:
                             # поиск товара по фильтрам. если фильтра нет - ищем товары на данной странице
                             if len(filter_prod_list) > 0:
                                 for filt_url in filter_prod_list:
-                                    response44 = request_f(filt_url, 1000, '')
+                                    response44 = request_get(filt_url)
                                     tree44 = html.fromstring(response44.text)
                                     level4 = 4
                                     extract_prod_list(tree44)
